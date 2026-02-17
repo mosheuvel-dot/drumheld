@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="DrumHeld Jr." />
+  <title>🥁 DrumHeld Jr.</title>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow-x: hidden; }
+    body { font-family: 'Nunito', sans-serif; background: #1a1a2e; }
+    button { font-family: 'Nunito', sans-serif; }
+    button:active { opacity: 0.85; }
+    @keyframes fall {
+      0%   { transform: translateY(0) rotate(0deg);   opacity: 1; }
+      100% { transform: translateY(110vh) rotate(720deg); opacity: 0; }
+    }
+    @media print {
+      #app > *:not(#printarea) { display: none !important; }
+      #printarea { display: block !important; position: static !important; }
+      body { background: white !important; }
+    }
+    /* Scrollbar styling */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #ffffff33; border-radius: 10px; }
+  </style>
+</head>
+<body>
+<div id="app"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ── Opslag via localStorage ─────────────────────────────────────────────────
+const opslaan = (key, val) => { try { localStorage.setItem(key, val); } catch {} };
+const laden    = (key)      => { try { return localStorage.getItem(key); } catch { return null; } };
+
+// ── Audio Engine ────────────────────────────────────────────────────────────
+function playDrum(type, ctx) {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  const out = ctx.createGain(); out.connect(ctx.destination);
+
+  if (type === "kick") {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.connect(g); g.connect(out);
+    o.frequency.setValueAtTime(120, t);
+    o.frequency.exponentialRampToValueAtTime(0.001, t + 0.55);
+    g.gain.setValueAtTime(1.2, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+    o.start(t); o.stop(t + 0.55);
+  } else if (type === "snare") {
+    const buf = ctx.createBuffer(1, ctx.sampleRate * 0.22, ctx.sampleRate);
+    const d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    const s = ctx.createBufferSource(), g = ctx.createGain(), f = ctx.createBiquadFilter();
+    f.type = "bandpass"; f.frequency.value = 2500; f.Q.value = 0.8;
+    s.buffer = buf; s.connect(f); f.connect(g); g.connect(out);
+    g.gain.setValueAtTime(0.9, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+    s.start(t); s.stop(t + 0.22);
+  } else if (type === "hihat") {
+    const buf = ctx.createBuffer(1, ctx.sampleRate * 0.08, ctx.sampleRate);
+    const d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    const s = ctx.createBufferSource(), g = ctx.createGain(), f = ctx.createBiquadFilter();
+    f.type = "highpass"; f.frequency.value = 9000;
+    s.buffer = buf; s.connect(f); f.connect(g); g.connect(out);
+    g.gain.setValueAtTime(0.55, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+    s.start(t); s.stop(t + 0.08);
+  } else if (type === "tom") {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.connect(g); g.connect(out);
+    o.frequency.setValueAtTime(185, t); o.frequency.exponentialRampToValueAtTime(55, t + 0.35);
+    g.gain.setValueAtTime(0.9, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+    o.start(t); o.stop(t + 0.35);
+  } else if (type === "crash") {
+    const buf = ctx.createBuffer(1, ctx.sampleRate * 0.7, ctx.sampleRate);
+    const d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    const s = ctx.createBufferSource(), g = ctx.createGain(), f = ctx.createBiquadFilter();
+    f.type = "bandpass"; f.frequency.value = 5000; f.Q.value = 0.4;
+    s.buffer = buf; s.connect(f); f.connect(g); g.connect(out);
+    g.gain.setValueAtTime(0.5, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+    s.start(t); s.stop(t + 0.7);
+  }
+}
+
+// ── Data ────────────────────────────────────────────────────────────────────
+const DRUMS = [
+  { id: "crash",  emoji: "💥", naam: "Crash",  kleur: "#FF6B6B", bg: "#FFE8E8", key: "1" },
+  { id: "hihat",  emoji: "🎩", naam: "Hi-Hat", kleur: "#FFB347", bg: "#FFF3E0", key: "2" },
+  { id: "tom",    emoji: "🟠", naam: "Tom",    kleur: "#4ECDC4", bg: "#E0F7F6", key: "3" },
+  { id: "snare",  emoji: "⚡", naam: "Snare",  kleur: "#45B7D1", bg: "#E0F4FB", key: "4" },
+  { id: "kick",   emoji: "💣", naam: "Kick",   kleur: "#96CEB4", bg: "#E8F5EE", key: "sp" },
+];
+
+const XP_PER_LEVEL = 100;
+
+const BADGES = [
+  { id: "eerste_slag",  naam: "Eerste Slag! 🥁",    eis: "Speel je eerste noot",    emoji: "🥁" },
+  { id: "ritme_held",   naam: "Ritme Held 🦸",       eis: "Voltooi 3 spellen",       emoji: "🦸" },
+  { id: "noot_meester", naam: "Noot Meester 🎵",     eis: "Leer 5 noten kennen",     emoji: "🎵" },
+  { id: "perfectie",    naam: "Perfect! ⭐",          eis: "100% score op een spel",  emoji: "⭐" },
+  { id: "dagelijkse",   naam: "Dagelijkse Held 🌟",   eis: "7 dagen geoefend",        emoji: "🌟" },
+];
+
+const LEVELS_RITME = [
+  { id: 1, naam: "Level 1 – Eén slag",     bpm: 55, patroon: ["kick","kick","kick","kick"],                                               label: "K  K  K  K" },
+  { id: 2, naam: "Level 2 – Twee drums",   bpm: 60, patroon: ["kick","snare","kick","snare"],                                             label: "K  S  K  S" },
+  { id: 3, naam: "Level 3 – Hi-Hat erbij", bpm: 65, patroon: ["hihat","hihat","snare","hihat","hihat","snare","kick","kick"],             label: "H H S H H S K K" },
+  { id: 4, naam: "Level 4 – Rock ritme",   bpm: 70, patroon: ["kick","hihat","snare","hihat","kick","hihat","snare","hihat"],             label: "K H S H K H S H" },
+  { id: 5, naam: "Level 5 – Superster",    bpm: 80, patroon: ["crash","kick","hihat","snare","tom","kick","hihat","crash"],              label: "C K H S T K H C" },
+];
+
+const NOTEN_LES = [
+  { id:1, titel:"Wat is een maat? 📏",  uitleg:"Een maat is een groepje slagen. We tellen: 1 - 2 - 3 - 4. Net als bij klappen!", oefening:"Klap 4x mee: 1 ✋ 2 ✋ 3 ✋ 4 ✋", symbolen:["1","2","3","4"], kleuren:["#FF6B6B","#FFB347","#4ECDC4","#45B7D1"], drum: null },
+  { id:2, titel:"De Kick Noot 💣",      uitleg:"De kick-drum zit onderaan op de nootlijn. We tekenen hem als een gevulde noot.", oefening:"Stamp met je voet op slag 1 en 3: BOEM - rust - BOEM - rust", symbolen:["💣","—","💣","—"], kleuren:["#96CEB4","#ddd","#96CEB4","#ddd"], drum: "kick" },
+  { id:3, titel:"De Snare Noot ⚡",     uitleg:"De snare zit in het midden. Op slag 2 en 4 klinkt hij: dat noemen we de 'backbeat'!", oefening:"Klap op je knie op slag 2 en 4: rust - PAK - rust - PAK", symbolen:["—","⚡","—","⚡"], kleuren:["#ddd","#45B7D1","#ddd","#45B7D1"], drum: "snare" },
+  { id:4, titel:"De Hi-Hat 🎩",         uitleg:"De hi-hat klinkt op elke tel! Het is een kruis-teken boven de lijn.", oefening:"Tik met je vinger op tafel op elke tel: tss tss tss tss", symbolen:["🎩","🎩","🎩","🎩"], kleuren:["#FFB347","#FFB347","#FFB347","#FFB347"], drum: "hihat" },
+  { id:5, titel:"Alles samen! 🎶",      uitleg:"Nu combineren we kick, snare en hi-hat. Dit is het basisritme van bijna alle liedjes!", oefening:"Voet-tik-knie-tik: BOEM-tss-PAK-tss-BOEM-tss-PAK-tss", symbolen:["💣🎩","🎩","⚡🎩","🎩"], kleuren:["#96CEB4","#FFB347","#45B7D1","#FFB347"], drum: null },
+];
+
+const DAGELIJKSE_TIPS = [
+  "Stamp 4x met je voet mee op je favoriete liedje!",
+  "Tik het ritme op je knie: BOEM-tss-PAK-tss",
+  "Tel hardop mee: 1-2-3-4 terwijl je muziek luistert",
+  "Klap op slag 2 en 4 van elk nummer dat je hoort",
+  "Oefen de hi-hat door snel op tafel te tikken",
+  "Bedenk je eigen ritme en speel het 5x",
+  "Luister naar een liedje en zoek de kick-drum",
+];
+
+// ── Confetti ────────────────────────────────────────────────────────────────
+function Confetti({ active }) {
+  if (!active) return null;
+  const pieces = Array.from({ length: 40 }, (_, i) => ({
+    left: Math.random() * 100,
+    delay: Math.random() * 0.8,
+    dur: 1.5 + Math.random(),
+    color: ["#FF6B6B","#FFB347","#4ECDC4","#45B7D1","#96CEB4","#FFD93D"][i % 6],
+    w: 8 + Math.random() * 10,
+    circle: Math.random() > 0.5,
+  }));
+  return (
+    <div style={{ position:"fixed", inset:0, pointerEvents:"none", zIndex:9999, overflow:"hidden" }}>
+      {pieces.map((p,i) => (
+        <div key={i} style={{
+          position:"absolute", left:`${p.left}%`, top:"-10px",
+          width:p.w, height:p.w, borderRadius: p.circle ? "50%" : "2px",
+          background:p.color, opacity:0,
+          animation:`fall ${p.dur}s ${p.delay}s ease-in forwards`,
+        }} />
+      ))}
+    </div>
+  );
+}
+
+// ── XP Bar ──────────────────────────────────────────────────────────────────
+function XPBar({ xp, level }) {
+  const pct = (xp % XP_PER_LEVEL) / XP_PER_LEVEL * 100;
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+      <span style={{ fontWeight:900, fontSize:13, color:"#FF6B6B", minWidth:55 }}>Lvl {level}</span>
+      <div style={{ flex:1, background:"#ffffff22", borderRadius:100, height:10, overflow:"hidden" }}>
+        <div style={{ height:"100%", background:"linear-gradient(90deg,#FF6B6B,#FFB347)", borderRadius:100, width:`${pct}%`, transition:"width 0.6s ease" }} />
+      </div>
+      <span style={{ fontSize:11, color:"#ffffff66", minWidth:40 }}>{xp % XP_PER_LEVEL}/{XP_PER_LEVEL}</span>
+    </div>
+  );
+}
+
+// ── Drum Pad ─────────────────────────────────────────────────────────────────
+function Pad({ drum, active, onHit, size=90 }) {
+  return (
+    <button
+      onPointerDown={e => { e.preventDefault(); onHit(drum.id); }}
+      style={{
+        width:size, height:size, borderRadius:"50%",
+        background: active ? drum.kleur : drum.bg,
+        border:`4px solid ${drum.kleur}`,
+        boxShadow: active
+          ? `0 0 28px ${drum.kleur}bb, inset 0 2px 0 #fff4`
+          : `0 5px 0 ${drum.kleur}55, inset 0 2px 0 #fff6`,
+        transform: active ? "scale(0.93) translateY(4px)" : "scale(1) translateY(0)",
+        transition:"all 0.07s ease",
+        cursor:"pointer", touchAction:"manipulation", userSelect:"none",
+        display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:3,
+      }}
+    >
+      <span style={{ fontSize: size > 80 ? 28 : 22 }}>{drum.emoji}</span>
+      <span style={{ fontSize:11, fontWeight:700, color: active ? "#fff" : "#555" }}>{drum.naam}</span>
+      <span style={{ fontSize:9, background: active ? "#fff3" : drum.kleur+"22", color: active ? "#fff" : drum.kleur, borderRadius:5, padding:"1px 5px", fontWeight:800 }}>{drum.key}</span>
+    </button>
+  );
+}
+
+// ── Ritme Spel ────────────────────────────────────────────────────────────────
+function RitmeSpel({ audioCtx, onXP, onBadge }) {
+  const [levelIdx, setLevelIdx] = useState(0);
+  const [fase, setFase]         = useState("intro");
+  const [demoStap, setDemoStap] = useState(-1);
+  const [input, setInput]       = useState([]);
+  const [actief, setActief]     = useState(null);
+  const [score, setScore]       = useState(null);
+  const [confetti, setConfetti] = useState(false);
+  const timerRef = useRef(null);
+  const lv = LEVELS_RITME[levelIdx];
+
+  const speelDemo = useCallback(() => {
+    clearInterval(timerRef.current);
+    setFase("demo"); setDemoStap(-1); setInput([]); setScore(null);
+    let i = 0;
+    const ms = Math.round(60000 / lv.bpm);
+    setTimeout(() => {
+      timerRef.current = setInterval(() => {
+        if (i >= lv.patroon.length) {
+          clearInterval(timerRef.current);
+          setDemoStap(-1);
+          setTimeout(() => setFase("spelen"), 600);
+          return;
+        }
+        playDrum(lv.patroon[i], audioCtx);
+        setDemoStap(i); setActief(lv.patroon[i]);
+        setTimeout(() => setActief(null), 140);
+        i++;
+      }, ms);
+    }, 400);
+  }, [lv, audioCtx]);
+
+  useEffect(() => () => clearInterval(timerRef.current), []);
+
+  const slagHit = useCallback((drumId) => {
+    if (fase !== "spelen") return;
+    playDrum(drumId, audioCtx);
+    setActief(drumId); setTimeout(() => setActief(null), 120);
+    setInput(prev => {
+      const nieuw = [...prev, drumId];
+      if (nieuw.length === lv.patroon.length) {
+        const correct = nieuw.filter((d,i) => d === lv.patroon[i]).length;
+        const pct = Math.round(correct / lv.patroon.length * 100);
+        setScore({ correct, totaal: lv.patroon.length, pct });
+        setFase("resultaat");
+        if (pct === 100) { setConfetti(true); onBadge("perfectie"); setTimeout(() => setConfetti(false), 3000); }
+        onXP(pct >= 80 ? 30 : pct >= 50 ? 15 : 5);
+        return [];
+      }
+      return nieuw;
+    });
+  }, [fase, lv, audioCtx, onXP, onBadge]);
+
+  useEffect(() => {
+    const map = {"1":"crash","2":"hihat","3":"tom","4":"snare"," ":"kick"};
+    const h = e => { if (map[e.key]) slagHit(map[e.key]); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [slagHit]);
+
+  return (
+    <div style={{ maxWidth:480, margin:"0 auto", padding:16 }}>
+      <Confetti active={confetti} />
+
+      {/* Level tabs */}
+      <div style={{ display:"flex", gap:6, marginBottom:14, flexWrap:"wrap" }}>
+        {LEVELS_RITME.map((l,i) => (
+          <button key={l.id} onClick={() => { setLevelIdx(i); setFase("intro"); setScore(null); }} style={{
+            padding:"5px 12px", borderRadius:20, border:"none", cursor:"pointer",
+            background: levelIdx===i ? "#FF6B6B" : "#ffffff15",
+            color: levelIdx===i ? "#fff" : "#aaa",
+            fontWeight:800, fontSize:12,
+          }}>Lvl {l.id}</button>
+        ))}
+      </div>
+
+      {/* Hoofd kaart */}
+      <div style={{ background:"#ffffff0e", backdropFilter:"blur(10px)", borderRadius:20, padding:20, border:"1px solid #ffffff18", marginBottom:16 }}>
+        <h3 style={{ margin:"0 0 6px", color:"#fff", fontFamily:"'Fredoka One',sans-serif", fontSize:20 }}>🎮 {lv.naam}</h3>
+
+        {/* Patroon */}
+        <div style={{ display:"flex", gap:6, flexWrap:"wrap", margin:"12px 0" }}>
+          {lv.patroon.map((d,i) => {
+            const drum = DRUMS.find(x => x.id === d);
+            const isDemo = fase==="demo" && i===demoStap;
+            const gespeeld = score && i < (input.length || lv.patroon.length);
+            return (
+              <div key={i} style={{
+                width:42, height:42, borderRadius:10,
+                background: isDemo ? drum.kleur : score ? (input[i]===d ? "#6BCB77" : "#FF6B6B") : drum.bg,
+                border:`2.5px solid ${drum.kleur}`,
+                display:"flex", alignItems:"center", justifyContent:"center",
+                fontSize:19, transition:"all 0.1s",
+                transform: isDemo ? "scale(1.18)" : "scale(1)",
+                opacity: fase==="intro" ? 0.65 : 1,
+              }}>{drum.emoji}</div>
+            );
+          })}
+        </div>
+
+        <div style={{ fontSize:12, color:"#ffffff44", fontFamily:"monospace", letterSpacing:2, marginBottom:14 }}>{lv.label}</div>
+
+        {fase==="intro" && (
+          <button onClick={speelDemo} style={{ width:"100%", padding:13, borderRadius:12, background:"linear-gradient(135deg,#FF6B6B,#FFB347)", color:"#fff", border:"none", cursor:"pointer", fontWeight:900, fontSize:16, fontFamily:"'Fredoka One',sans-serif" }}>
+            ▶ Hoor het ritme!
+          </button>
+        )}
+        {fase==="demo" && (
+          <div style={{ textAlign:"center", color:"#ffffff66", padding:"10px 0", fontStyle:"italic" }}>🎵 Luister goed...</div>
+        )}
+        {fase==="spelen" && (
+          <div style={{ background:"#6BCB7722", borderRadius:10, padding:"10px 14px", color:"#6BCB77", fontWeight:800, textAlign:"center", border:"1px solid #6BCB7744" }}>
+            🥁 Jij aan de beurt! ({input.length}/{lv.patroon.length})
+          </div>
+        )}
+        {fase==="resultaat" && score && (
+          <div style={{ background: score.pct===100?"#6BCB7722":score.pct>=50?"#FFB34722":"#FF6B6B22", borderRadius:12, padding:"14px 16px", textAlign:"center", border:`1px solid ${score.pct===100?"#6BCB7744":score.pct>=50?"#FFB34744":"#FF6B6B44"}` }}>
+            <div style={{ fontSize:36, marginBottom:4 }}>{score.pct===100?"🏆":score.pct>=80?"🎉":score.pct>=50?"👍":"💪"}</div>
+            <div style={{ fontWeight:900, fontSize:20, color:"#fff", fontFamily:"'Fredoka One',sans-serif" }}>{score.correct}/{score.totaal} goed – {score.pct}%</div>
+            <div style={{ display:"flex", gap:8, justifyContent:"center", marginTop:12 }}>
+              <button onClick={speelDemo} style={{ padding:"8px 16px", borderRadius:10, border:"none", cursor:"pointer", background:"#ffffff15", color:"#fff", fontWeight:800, fontSize:13 }}>🔄 Opnieuw</button>
+              {levelIdx < LEVELS_RITME.length-1 && score.pct >= 70 && (
+                <button onClick={() => { setLevelIdx(i=>i+1); setFase("intro"); setScore(null); }} style={{ padding:"8px 16px", borderRadius:10, border:"none", cursor:"pointer", background:"#FF6B6B", color:"#fff", fontWeight:800, fontSize:13 }}>
+                  Volgend level →
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Pads */}
+      {(fase==="spelen" || fase==="resultaat") && (
+        <div style={{ display:"flex", flexWrap:"wrap", gap:12, justifyContent:"center" }}>
+          {DRUMS.map(d => <Pad key={d.id} drum={d} active={actief===d.id} onHit={slagHit} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Noten Leren ────────────────────────────────────────────────────────────
+function NotenLeren({ audioCtx, onXP, onBadge, notenGeleerd, setNotenGeleerd }) {
+  const [idx, setIdx]         = useState(0);
+  const [actief, setActief]   = useState(null);
+  const [klaar, setKlaar]     = useState(false);
+  const les = NOTEN_LES[idx];
+
+  const speel = (id) => {
+    playDrum(id, audioCtx);
+    setActief(id); setTimeout(() => setActief(null), 150);
+  };
+
+  const voltooi = () => {
+    if (!notenGeleerd.includes(les.id)) {
+      const nieuw = [...notenGeleerd, les.id];
+      setNotenGeleerd(nieuw);
+      onXP(20);
+      if (nieuw.length >= 5) onBadge("noot_meester");
+    }
+    setKlaar(true);
+  };
+
+  return (
+    <div style={{ maxWidth:480, margin:"0 auto", padding:16 }}>
+      {/* Les tabs */}
+      <div style={{ display:"flex", gap:6, marginBottom:14 }}>
+        {NOTEN_LES.map((l,i) => (
+          <button key={l.id} onClick={() => { setIdx(i); setKlaar(false); }} style={{
+            flex:1, padding:"6px 4px", borderRadius:10, border:"none", cursor:"pointer",
+            background: notenGeleerd.includes(l.id) ? "#4ECDC4" : idx===i ? "#45B7D1" : "#ffffff15",
+            color: (notenGeleerd.includes(l.id)||idx===i) ? "#fff" : "#888",
+            fontWeight:900, fontSize:13,
+          }}>{notenGeleerd.includes(l.id)?"✓":l.id}</button>
+        ))}
+      </div>
+
+      {/* Les kaart */}
+      <div style={{ background:"#ffffff0e", backdropFilter:"blur(10px)", borderRadius:20, padding:22, border:"1px solid #ffffff18", marginBottom:14 }}>
+        <h3 style={{ margin:"0 0 10px", color:"#fff", fontFamily:"'Fredoka One',sans-serif", fontSize:20 }}>{les.titel}</h3>
+        <p style={{ margin:"0 0 14px", color:"#ccc", fontSize:15, lineHeight:1.6 }}>{les.uitleg}</p>
+
+        {/* Noten visualisatie */}
+        <div style={{ background:"#ffffff08", borderRadius:14, padding:16, marginBottom:14, border:"1.5px dashed #ffffff22" }}>
+          <div style={{ fontSize:11, color:"#ffffff44", marginBottom:10, fontWeight:700, letterSpacing:1 }}>📝 NOTEN VOORBEELD:</div>
+          <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+            {les.symbolen.map((s,i) => (
+              <div key={i} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:6 }}>
+                <div style={{
+                  width:48, height:48, borderRadius:12,
+                  background: les.kleuren[i]==="ddd" ? "#ffffff11" : les.kleuren[i],
+                  display:"flex", alignItems:"center", justifyContent:"center",
+                  fontSize:22, fontWeight:900,
+                  color: les.kleuren[i]==="#ddd" ? "#ffffff33" : "#fff",
+                  boxShadow: les.kleuren[i]==="#ddd" ? "none" : `0 3px 12px ${les.kleuren[i]}55`,
+                  border: `2px solid ${les.kleuren[i]==="#ddd"?"#ffffff15":les.kleuren[i]}`,
+                }}>{s}</div>
+                <span style={{ fontSize:12, color:"#ffffff44", fontWeight:800 }}>{i+1}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Tip */}
+        <div style={{ background:"#FFB34718", borderRadius:12, padding:"12px 14px", marginBottom:14, border:"1px solid #FFB34733" }}>
+          <div style={{ fontSize:11, color:"#FFB347", fontWeight:900, marginBottom:4, letterSpacing:1 }}>💡 ZONDER SCHERM OEFENEN:</div>
+          <div style={{ color:"#ffe4b3", fontSize:14 }}>{les.oefening}</div>
+        </div>
+
+        {/* Geluid knop */}
+        {les.drum && (() => {
+          const d = DRUMS.find(x => x.id === les.drum);
+          return (
+            <div style={{ marginBottom:14 }}>
+              <div style={{ fontSize:11, color:"#ffffff44", marginBottom:8, fontWeight:700, letterSpacing:1 }}>🎧 HOOR HET GELUID:</div>
+              <Pad drum={d} active={actief===d.id} onHit={speel} size={80} />
+            </div>
+          );
+        })()}
+
+        <button onClick={voltooi} style={{
+          width:"100%", padding:13, borderRadius:12, border:"none", cursor:"pointer",
+          background: notenGeleerd.includes(les.id) ? "#4ECDC4" : "linear-gradient(135deg,#45B7D1,#4ECDC4)",
+          color:"#fff", fontWeight:900, fontSize:15, fontFamily:"'Fredoka One',sans-serif",
+        }}>{notenGeleerd.includes(les.id) ? "✓ Les voltooid!" : "✓ Ik snap het!"}</button>
+      </div>
+
+      {klaar && idx < NOTEN_LES.length-1 && (
+        <button onClick={() => { setIdx(i=>i+1); setKlaar(false); }} style={{
+          width:"100%", padding:13, borderRadius:12, border:"none", cursor:"pointer",
+          background:"#FF6B6B", color:"#fff", fontWeight:900, fontSize:15, fontFamily:"'Fredoka One',sans-serif",
+        }}>Volgende les →</button>
+      )}
+    </div>
+  );
+}
+
+// ── Vrij Spelen ────────────────────────────────────────────────────────────
+function VrijSpelen({ audioCtx, onXP, onBadge, eersteKeer, setEersteKeer }) {
+  const [actief, setActief] = useState(null);
+  const [log, setLog]       = useState([]);
+
+  const slagHit = useCallback((id) => {
+    playDrum(id, audioCtx);
+    setActief(id); setTimeout(() => setActief(null), 120);
+    setLog(prev => [id, ...prev].slice(0, 14));
+    if (eersteKeer) { setEersteKeer(false); onXP(10); onBadge("eerste_slag"); }
+  }, [audioCtx, eersteKeer, setEersteKeer, onXP, onBadge]);
+
+  useEffect(() => {
+    const map = {"1":"crash","2":"hihat","3":"tom","4":"snare"," ":"kick"};
+    const h = e => { if (map[e.key]) slagHit(map[e.key]); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [slagHit]);
+
+  return (
+    <div style={{ maxWidth:480, margin:"0 auto", padding:16 }}>
+      <div style={{ background:"#ffffff0e", backdropFilter:"blur(10px)", borderRadius:16, padding:14, marginBottom:16, border:"1px solid #ffffff18", textAlign:"center" }}>
+        <p style={{ margin:0, color:"#aaa", fontSize:13 }}>Toetsenbord: <strong style={{color:"#fff"}}>1 2 3 4</strong> en <strong style={{color:"#fff"}}>spatie</strong> voor kick</p>
+      </div>
+      <div style={{ display:"flex", flexWrap:"wrap", gap:14, justifyContent:"center", marginBottom:16 }}>
+        {DRUMS.map(d => <Pad key={d.id} drum={d} active={actief===d.id} onHit={slagHit} size={100} />)}
+      </div>
+      {log.length > 0 && (
+        <div style={{ background:"#ffffff0e", backdropFilter:"blur(10px)", borderRadius:14, padding:14, border:"1px solid #ffffff18" }}>
+          <p style={{ margin:"0 0 8px", fontSize:11, color:"#ffffff44", fontWeight:700, letterSpacing:1 }}>JOUW RITME:</p>
+          <div style={{ display:"flex", flexWrap:"wrap", gap:5 }}>
+            {log.map((d,i) => {
+              const drum = DRUMS.find(x=>x.id===d);
+              return <span key={i} style={{ background:drum.bg, border:`2px solid ${drum.kleur}`, borderRadius:8, padding:"3px 8px", fontSize:18, opacity:1-i*0.06 }}>{drum.emoji}</span>;
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Badges ──────────────────────────────────────────────────────────────────
+function BadgesScherm({ verdiend }) {
+  return (
+    <div style={{ maxWidth:480, margin:"0 auto", padding:16 }}>
+      <div style={{ background:"#ffffff0e", backdropFilter:"blur(10px)", borderRadius:18, padding:18, border:"1px solid #ffffff18" }}>
+        <h3 style={{ margin:"0 0 14px", color:"#fff", fontFamily:"'Fredoka One',sans-serif", fontSize:20 }}>🏆 Jouw Badges</h3>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+          {BADGES.map(b => (
+            <div key={b.id} style={{
+              borderRadius:14, padding:14,
+              background: verdiend.includes(b.id) ? "linear-gradient(135deg,#FF6B6B,#FFB347)" : "#ffffff08",
+              opacity: verdiend.includes(b.id) ? 1 : 0.45,
+              boxShadow: verdiend.includes(b.id) ? "0 4px 20px #FF6B6B44" : "none",
+              border:`1.5px solid ${verdiend.includes(b.id)?"#FF6B6B66":"#ffffff15"}`,
+              transition:"all 0.3s",
+            }}>
+              <div style={{ fontSize:32, marginBottom:4 }}>{b.emoji}</div>
+              <div style={{ fontWeight:900, fontSize:13, color: verdiend.includes(b.id)?"#fff":"#888" }}>{b.naam}</div>
+              <div style={{ fontSize:11, color: verdiend.includes(b.id)?"#fff9":"#666", marginTop:2 }}>{b.eis}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Print Modal ────────────────────────────────────────────────────────────
+function PrintModal({ onClose }) {
+  return (
+    <div style={{ position:"fixed", inset:0, background:"#000a", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }} onClick={onClose}>
+      <div id="printarea" onClick={e=>e.stopPropagation()} style={{ background:"#fff", borderRadius:20, padding:24, maxWidth:520, width:"100%", maxHeight:"88vh", overflowY:"auto", fontFamily:"'Nunito',sans-serif", boxShadow:"0 20px 60px #0007" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+          <h2 style={{ margin:0, fontSize:20, color:"#333" }}>🖨️ Oefenkaarten – zonder scherm!</h2>
+          <button onClick={onClose} style={{ background:"none", border:"none", fontSize:22, cursor:"pointer", color:"#333" }}>✕</button>
+        </div>
+
+        {[
+          { kleur:"#FF6B6B", titel:"🥁 KAART 1 – De 4 Slagen", inhoud: <><p style={{margin:"0 0 8px",color:"#555",fontSize:13}}>Tel hardop: <strong>1 – 2 – 3 – 4</strong> en klap op elke tel!</p><div style={{display:"flex",gap:8}}>{["1","2","3","4"].map((n,i)=><div key={i} style={{flex:1,height:40,background:["#FF6B6B","#FFB347","#4ECDC4","#45B7D1"][i],borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:900,fontSize:20}}>{n}</div>)}</div><p style={{margin:"8px 0 0",color:"#888",fontSize:12}}>💡 Doe dit 10x mee op muziek!</p></> },
+          { kleur:"#96CEB4", titel:"💣 KAART 2 – Kick Ritme",  inhoud: <><p style={{margin:"0 0 8px",color:"#555",fontSize:13}}>Stamp met je voet op <strong>slag 1 en 3</strong>:</p><div style={{fontFamily:"monospace",fontSize:18,letterSpacing:4,color:"#333"}}><span style={{color:"#96CEB4",fontWeight:900}}>BOEM</span> – – – <span style={{color:"#96CEB4",fontWeight:900}}>BOEM</span> – – –</div><p style={{margin:"8px 0 0",color:"#888",fontSize:12}}>💡 Eerst langzaam, dan steeds sneller!</p></> },
+          { kleur:"#45B7D1", titel:"⚡ KAART 3 – Snare Backbeat", inhoud: <><p style={{margin:"0 0 8px",color:"#555",fontSize:13}}>Klap op je knie op <strong>slag 2 en 4</strong>:</p><div style={{fontFamily:"monospace",fontSize:18,letterSpacing:4,color:"#333"}}>– – – <span style={{color:"#45B7D1",fontWeight:900}}>PAK</span> – – – <span style={{color:"#45B7D1",fontWeight:900}}>PAK</span></div><p style={{margin:"8px 0 0",color:"#888",fontSize:12}}>💡 Snap je vingers of klap in je handen!</p></> },
+          { kleur:"#FFB347", titel:"🎩 KAART 4 – Hi-Hat Trein", inhoud: <><p style={{margin:"0 0 8px",color:"#555",fontSize:13}}>Tik met je vinger op tafel op <strong>elke tel</strong>:</p><div style={{fontFamily:"monospace",fontSize:15,color:"#FFB347",fontWeight:900,letterSpacing:3}}>tss – tss – tss – tss – tss – tss – tss – tss</div><p style={{margin:"8px 0 0",color:"#888",fontSize:12}}>💡 Net als een trein: gelijkmatig!</p></> },
+          { kleur:"#FF6B6B", titel:"🎶 KAART 5 – Het Basisritme!", inhoud: <><p style={{margin:"0 0 8px",color:"#555",fontSize:13}}>Alles samen (voet=kick, knie=snare, vinger=hi-hat):</p><div style={{display:"grid",gridTemplateColumns:"repeat(8,1fr)",gap:4}}>{["💣","🎩","—","🎩","⚡","🎩","—","🎩"].map((s,i)=><div key={i} style={{height:36,background:s==="—"?"#f0f0f0":"#fff3e0",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,border:`1.5px solid ${s==="—"?"#e0e0e0":"#FFB347"}`}}>{s}</div>)}</div><p style={{margin:"8px 0 0",color:"#888",fontSize:12}}>💡 <strong>BOEM</strong>-tss-<strong>PAK</strong>-tss – herhaal!</p></> },
+        ].map((k,i) => (
+          <div key={i} style={{ border:`3px dashed ${k.kleur}`, borderRadius:14, padding:14, marginBottom:12 }}>
+            <div style={{ fontWeight:900, fontSize:15, color:k.kleur, marginBottom:8 }}>{k.titel}</div>
+            {k.inhoud}
+          </div>
+        ))}
+
+        <button onClick={() => window.print()} style={{ width:"100%", padding:13, borderRadius:12, background:"#FF6B6B", color:"#fff", border:"none", cursor:"pointer", fontWeight:900, fontSize:15, fontFamily:"'Fredoka One',sans-serif" }}>
+          🖨️ Printen!
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Hoofd App ──────────────────────────────────────────────────────────────
+function App() {
+  const [scherm, setScherm]             = useState("home");
+  const [xp, setXp]                     = useState(0);
+  const [badges, setBadges]             = useState([]);
+  const [notenGeleerd, setNotenGeleerd] = useState([]);
+  const [spellenVoltooid, setSpellen]   = useState(0);
+  const [eersteKeer, setEersteKeer]     = useState(true);
+  const [printOpen, setPrintOpen]       = useState(false);
+  const [confetti, setConfetti]         = useState(false);
+  const audioRef = useRef(null);
+  const level = Math.floor(xp / XP_PER_LEVEL) + 1;
+
+  // Laden uit localStorage
+  useEffect(() => {
+    const savedXp = laden("drum-xp"); if (savedXp) setXp(+savedXp);
+    const savedBadges = laden("drum-badges"); if (savedBadges) try { setBadges(JSON.parse(savedBadges)); } catch {}
+    const savedNoten  = laden("drum-noten");  if (savedNoten)  try { setNotenGeleerd(JSON.parse(savedNoten)); } catch {}
+    const savedSpellen= laden("drum-spellen");if (savedSpellen) setSpellen(+savedSpellen);
+    const savedEerste = laden("drum-eerste"); if (savedEerste) setEersteKeer(false);
+  }, []);
+
+  const initAudio = () => {
+    if (!audioRef.current) audioRef.current = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioRef.current.state === "suspended") audioRef.current.resume();
+  };
+
+  const onXP = useCallback((amount) => {
+    setXp(prev => {
+      const nieuw = prev + amount;
+      opslaan("drum-xp", String(nieuw));
+      if (Math.floor(prev/XP_PER_LEVEL) < Math.floor(nieuw/XP_PER_LEVEL)) {
+        setConfetti(true); setTimeout(() => setConfetti(false), 3000);
+      }
+      return nieuw;
+    });
+  }, []);
+
+  const onBadge = useCallback((id) => {
+    setBadges(prev => {
+      if (prev.includes(id)) return prev;
+      const nieuw = [...prev, id];
+      opslaan("drum-badges", JSON.stringify(nieuw));
+      return nieuw;
+    });
+    setSpellen(prev => {
+      const n = prev + 1;
+      opslaan("drum-spellen", String(n));
+      if (n >= 3) onBadge("ritme_held");
+      return n;
+    });
+  }, []);
+
+  const saveNoten = useCallback((v) => {
+    setNotenGeleerd(v);
+    opslaan("drum-noten", JSON.stringify(v));
+  }, []);
+
+  const saveEerste = useCallback((v) => {
+    setEersteKeer(v);
+    if (!v) opslaan("drum-eerste", "done");
+  }, []);
+
+  const nav = [
+    { id:"home",   emoji:"🏠", label:"Home"   },
+    { id:"vrij",   emoji:"🥁", label:"Spelen" },
+    { id:"ritme",  emoji:"🎮", label:"Spel"   },
+    { id:"noten",  emoji:"🎵", label:"Noten"  },
+    { id:"badges", emoji:"🏆", label:"Badges" },
+  ];
+
+  return (
+    <div onPointerDown={initAudio} style={{ minHeight:"100vh", background:"linear-gradient(160deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%)", paddingBottom:80 }}>
+      <Confetti active={confetti} />
+      {printOpen && <PrintModal onClose={() => setPrintOpen(false)} />}
+
+      {/* Header */}
+      <div style={{ background:"#ffffff08", backdropFilter:"blur(14px)", borderBottom:"1px solid #ffffff15", padding:"12px 16px 10px", position:"sticky", top:0, zIndex:100 }}>
+        <div style={{ maxWidth:480, margin:"0 auto", display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{ flex:1 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:5 }}>
+              <span style={{ fontSize:24 }}>🥁</span>
+              <span style={{ fontFamily:"'Fredoka One',sans-serif", fontSize:22, color:"#fff" }}>DrumHeld Jr.</span>
+              <span style={{ background:"#FF6B6B", color:"#fff", borderRadius:20, padding:"2px 8px", fontSize:11, fontWeight:900 }}>LVL {level}</span>
+            </div>
+            <XPBar xp={xp} level={level} />
+          </div>
+          <button onClick={() => setPrintOpen(true)} style={{ background:"#ffffff12", border:"1.5px solid #ffffff25", borderRadius:10, padding:"7px 11px", cursor:"pointer", fontSize:18, color:"#fff" }}>🖨️</button>
+        </div>
+      </div>
+
+      {/* Inhoud */}
+      <div style={{ maxWidth:480, margin:"0 auto" }}>
+
+        {scherm==="home" && (
+          <div style={{ padding:16 }}>
+            {/* Hero */}
+            <div style={{ background:"linear-gradient(135deg,#FF6B6B,#FFB347)", borderRadius:22, padding:24, marginBottom:16, color:"#fff", boxShadow:"0 8px 32px #FF6B6B44", textAlign:"center" }}>
+              <div style={{ fontSize:64, marginBottom:8 }}>🥁</div>
+              <div style={{ fontFamily:"'Fredoka One',sans-serif", fontSize:28, marginBottom:6 }}>Hey Drummer!</div>
+              <div style={{ fontSize:14, opacity:0.9 }}>Je hebt al <strong>{xp} XP</strong> verdiend en <strong>{badges.length}</strong> badges!</div>
+            </div>
+
+            {/* Menu */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:16 }}>
+              {[
+                { s:"vrij",   e:"🥁", t:"Vrij Spelen",   sub:"Doe maar raak!",           kleur:"#FF6B6B" },
+                { s:"ritme",  e:"🎮", t:"Ritme Spel",     sub:"Hoor & speel na",           kleur:"#FFB347" },
+                { s:"noten",  e:"🎵", t:"Noten Leren",    sub:"Wat zijn de tekens?",       kleur:"#4ECDC4" },
+                { s:"badges", e:"🏆", t:"Badges",         sub:`${badges.length}/${BADGES.length} verdiend`, kleur:"#C77DFF" },
+              ].map(k => (
+                <button key={k.s} onClick={() => setScherm(k.s)} style={{
+                  background:"#ffffff0c", border:`2.5px solid ${k.kleur}55`, borderRadius:18,
+                  padding:"18px 12px", cursor:"pointer", textAlign:"center",
+                  boxShadow:`0 4px 20px ${k.kleur}18`,
+                }}>
+                  <div style={{ fontSize:34, marginBottom:6 }}>{k.e}</div>
+                  <div style={{ fontFamily:"'Fredoka One',sans-serif", fontSize:15, color:"#fff" }}>{k.t}</div>
+                  <div style={{ fontSize:11, color:"#888", marginTop:2 }}>{k.sub}</div>
+                </button>
+              ))}
+            </div>
+
+            {/* Dagelijkse tip */}
+            <div style={{ background:"#ffffff0c", borderRadius:16, padding:16, border:"1.5px solid #ffffff15" }}>
+              <div style={{ fontWeight:900, color:"#FFB347", fontSize:13, marginBottom:6, letterSpacing:1 }}>💡 TIP VAN VANDAAG</div>
+              <div style={{ color:"#ccc", fontSize:14, lineHeight:1.5 }}>{DAGELIJKSE_TIPS[new Date().getDay()]}</div>
+            </div>
+          </div>
+        )}
+
+        {scherm==="vrij"   && <VrijSpelen   audioCtx={audioRef.current} onXP={onXP} onBadge={onBadge} eersteKeer={eersteKeer} setEersteKeer={saveEerste} />}
+        {scherm==="ritme"  && <RitmeSpel    audioCtx={audioRef.current} onXP={onXP} onBadge={onBadge} />}
+        {scherm==="noten"  && <NotenLeren   audioCtx={audioRef.current} onXP={onXP} onBadge={onBadge} notenGeleerd={notenGeleerd} setNotenGeleerd={saveNoten} />}
+        {scherm==="badges" && <BadgesScherm verdiend={badges} />}
+      </div>
+
+      {/* Bottom nav */}
+      <div style={{ position:"fixed", bottom:0, left:0, right:0, background:"#0a0a1aee", backdropFilter:"blur(12px)", borderTop:"1px solid #ffffff15", display:"flex", justifyContent:"space-around", padding:"8px 0 16px", zIndex:200 }}>
+        {nav.map(n => (
+          <button key={n.id} onClick={() => setScherm(n.id)} style={{
+            background:"none", border:"none", cursor:"pointer",
+            display:"flex", flexDirection:"column", alignItems:"center", gap:3,
+            padding:"4px 10px", opacity: scherm===n.id ? 1 : 0.38,
+            transition:"opacity 0.2s",
+          }}>
+            <span style={{ fontSize:22 }}>{n.emoji}</span>
+            <span style={{ fontSize:10, fontWeight:800, color:"#fff" }}>{n.label}</span>
+            {scherm===n.id && <div style={{ width:18, height:3, background:"#FF6B6B", borderRadius:100 }} />}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("app"));
+root.render(<App />);
+</script>
+</body>
+</html>
